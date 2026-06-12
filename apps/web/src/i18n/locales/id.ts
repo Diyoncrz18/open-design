@@ -1026,7 +1026,7 @@ export const id: Dict = {
   'routines.status.canceled': 'dibatalkan',
   'routines.confirmDelete': 'Hapus otomatisasi ini? Proses sebelumnya beserta proyeknya tetap disimpan.',
   'routines.errorPickProject': 'Pilih project untuk digunakan kembali, atau beralih ke “Buat baru setiap eksekusi”',
-  'routines.errorAgentEmptyOutput': 'Agent selesai tanpa menghasilkan output apa pun. Model atau penyedia mungkin mengembalikan respons kosong — periksa log Agent untuk error dari hulu.',
+  'routines.errorAgentEmptyOutput': 'Agent selesai tanpa menghasilkan output apa pun. Model atau provider mungkin mengembalikan respons kosong. Periksa log agent untuk error upstream, lalu coba login ulang ke agent, periksa kuota, atau ganti model.',
   'entry.helpAria': 'Bantuan',
   'entry.helpMenuAria': 'Menu bantuan',
   'entry.helpGetHelp': 'Dapatkan bantuan di GitHub',
