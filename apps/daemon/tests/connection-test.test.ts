@@ -2760,6 +2760,36 @@ process.exit(1);
     );
   });
 
+  it('preserves unrelated OpenCode missing-required failures', async () => {
+    await withFakeOpenCode(
+      `
+const args = process.argv.slice(2);
+if (args[0] === 'models') {
+  console.log('github-copilot/gpt-4o');
+  process.exit(0);
+}
+console.error('missing required environment variable OPENAI_API_KEY');
+process.exit(1);
+`,
+      async () => {
+        const res = await realFetch(`${baseUrl}/api/test/connection`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: 'agent', agentId: 'opencode' }),
+        });
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body).toMatchObject({
+          ok: false,
+          kind: 'agent_spawn_failed',
+          agentName: 'OpenCode',
+        });
+        expect(body.detail).toContain('missing required environment variable OPENAI_API_KEY');
+        expect(body.detail).not.toContain('OpenCode CLI appears to be outdated');
+      },
+    );
+  });
+
   it('launches OpenCode connection tests with 1.3-compatible JSON stdin args', async () => {
     const markerDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'od-opencode-argv-'));
     const argvFile = path.join(markerDir, 'argv.json');

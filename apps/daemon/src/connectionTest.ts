@@ -1681,7 +1681,7 @@ function openCodeOutdatedCliDetail(output: string): string | null {
   const looksLikeOpenCodeHelp =
     /\bopencode\b/u.test(value) && /\b(?:usage|commands|options):/u.test(value);
   const looksLikeUnsupportedArgs =
-    /\b(?:unknown option|unknown argument|unexpected argument|unrecognized option|incompatible opencode args|required option|missing required)\b/u.test(value);
+    /\b(?:unknown option|unknown argument|unexpected argument|unrecognized option|invalid option|incompatible opencode args)\b/u.test(value);
 
   return looksLikeOpenCodeHelp || looksLikeUnsupportedArgs
     ? OPENCODE_OUTDATED_CLI_DETAIL
