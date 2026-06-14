@@ -52,6 +52,22 @@ describe('workspace tabs chrome styles', () => {
     expect(ruleValue(focusedComposerShell, 'box-shadow')).toContain('0 0 0 1px');
   });
 
+  it('keeps the fixed composer visually stable while quick search is open', () => {
+    const fixedShell = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer .composer-shell:focus-within',
+    );
+    const fixedInput = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer .composer-input-wrap:focus-within',
+    );
+
+    expect(ruleValue(fixedShell, 'border-color')).toBe('var(--border)');
+    expect(ruleValue(fixedShell, 'box-shadow')).toBe('none');
+    expect(ruleValue(fixedInput, 'background')).toBe('var(--bg-panel)');
+    expect(ruleValue(fixedInput, 'border-color')).toBe('var(--border-soft)');
+  });
+
   it('uses hairline dividers for the tab chrome and entry rail', () => {
     const chrome = cssDeclarations(shellCss, '.workspace-tabs-chrome.app-chrome-header');
     const chromeDivider = cssDeclarations(shellCss, '.workspace-tabs-chrome.app-chrome-header::after');

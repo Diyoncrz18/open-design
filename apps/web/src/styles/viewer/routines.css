@@ -1538,6 +1538,10 @@
   border-color: var(--border-strong);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 4%, transparent);
 }
+body.od-quick-switcher-open .chat-composer-fixed-layer .composer-shell:focus-within {
+  border-color: var(--border);
+  box-shadow: none;
+}
 .app .composer.drag-active .composer-shell {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent);
@@ -1550,6 +1554,10 @@
    the one input surface inside the tinted card — the resting border replaces
    the removed toolbar divider as the only separator in the footer. */
 .chat-composer-fixed-layer .composer-input-wrap {
+  background: var(--bg-panel);
+  border-color: var(--border-soft);
+}
+body.od-quick-switcher-open .chat-composer-fixed-layer .composer-input-wrap:focus-within {
   background: var(--bg-panel);
   border-color: var(--border-soft);
 }

@@ -111,6 +111,8 @@ afterEach(() => {
     act(() => root?.unmount());
     root = null;
   }
+  document.body.classList.remove('od-quick-switcher-open');
+  document.querySelectorAll('.chat-composer-fixed-layer').forEach((node) => node.remove());
   host?.remove();
   host = null;
   vi.clearAllMocks();
@@ -233,6 +235,57 @@ function renderDesignFilesPanel(overrides: Partial<React.ComponentProps<typeof D
   };
   return render(<DesignFilesPanel {...props} />);
 }
+
+describe('FileWorkspace quick switcher visual isolation', () => {
+  it('moves focus into quick search and marks the document while the overlay is open', async () => {
+    const composerLayer = document.createElement('div');
+    composerLayer.className = 'chat-composer-fixed-layer';
+    composerLayer.innerHTML = `
+      <div class="composer">
+        <div class="composer-shell">
+          <div class="composer-input-wrap">
+            <button type="button">Mock focused composer control</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(composerLayer);
+
+    const composerControl = composerLayer.querySelector<HTMLButtonElement>('button');
+    if (!composerControl) throw new Error('Missing mock composer control');
+    composerControl.focus();
+    expect(document.activeElement).toBe(composerControl);
+
+    render(
+      <FileWorkspace
+        projectId="project-1"
+        projectKind="prototype"
+        files={[workspaceFile('index.html')]}
+        liveArtifacts={[]}
+        onRefreshFiles={vi.fn()}
+        isDeck={false}
+        tabsState={{ tabs: [], active: null }}
+        onTabsStateChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: 'p', ctrlKey: true });
+
+    await waitFor(() => {
+      expect(document.body.classList.contains('od-quick-switcher-open')).toBe(true);
+    });
+    const quickSearchInput = screen.getByRole('textbox');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(quickSearchInput);
+    });
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(document.body.classList.contains('od-quick-switcher-open')).toBe(false);
+    });
+  });
+});
 
 function unreadableDropDataTransfer(fallbackFiles: File[] = []) {
   return {
