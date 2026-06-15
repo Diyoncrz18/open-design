@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -86,9 +88,12 @@ vi.mock('../../src/components/DesignFilesPanel', async () => {
 const mockedFetchProjectFileText = vi.mocked(fetchProjectFileText);
 const mockedUploadProjectFiles = vi.mocked(uploadProjectFiles);
 const mockedWriteProjectTextFile = vi.mocked(writeProjectTextFile);
+const chatCss = readFileSync(join(process.cwd(), 'src/styles/chat.css'), 'utf8');
+const routinesCss = readFileSync(join(process.cwd(), 'src/styles/viewer/routines.css'), 'utf8');
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+let composerCssStyle: HTMLStyleElement | null = null;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -113,6 +118,8 @@ afterEach(() => {
   }
   document.body.classList.remove('od-quick-switcher-open');
   document.querySelectorAll('.chat-composer-fixed-layer').forEach((node) => node.remove());
+  composerCssStyle?.remove();
+  composerCssStyle = null;
   host?.remove();
   host = null;
   vi.clearAllMocks();
@@ -144,6 +151,37 @@ function workspaceFile(name: string): ProjectFile {
     kind: name.endsWith('.html') ? 'html' : 'text',
     mime: name.endsWith('.html') ? 'text/html' : 'text/plain',
   };
+}
+
+function cssDeclarations(css: string, selector: string): string {
+  const blocks: string[] = [];
+  const rulePattern = /([^{}]+)\{([^}]*)\}/g;
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  let match: RegExpExecArray | null;
+  while ((match = rulePattern.exec(cssWithoutComments)) !== null) {
+    const selectors = (match[1] ?? '').split(',').map((item) => item.trim());
+    if (selectors.includes(selector)) blocks.push(match[2] ?? '');
+  }
+  if (blocks.length === 0) throw new Error(`Missing CSS block for ${selector}`);
+  return blocks.join('\n');
+}
+
+function installComposerIsolationCss() {
+  const rules = [
+    ['.chat-composer-fixed-layer', chatCss],
+    ['.chat-composer-fixed-layer .composer', chatCss],
+    ['.chat-composer-fixed-layer .composer-shell', routinesCss],
+    ['.chat-composer-fixed-layer .composer.drag-active .composer-shell', routinesCss],
+    ['body.od-quick-switcher-open .chat-composer-fixed-layer', routinesCss],
+    ['body.od-quick-switcher-open .chat-composer-fixed-layer .composer', routinesCss],
+    ['body.od-quick-switcher-open .chat-composer-fixed-layer .composer-shell', routinesCss],
+    ['body.od-quick-switcher-open .chat-composer-fixed-layer .composer.drag-active .composer-shell', routinesCss],
+  ] as const;
+  composerCssStyle = document.createElement('style');
+  composerCssStyle.textContent = rules
+    .map(([selector, css]) => `${selector} {${cssDeclarations(css, selector)}}`)
+    .join('\n');
+  document.head.appendChild(composerCssStyle);
 }
 
 function renderWorkspace(element: React.ReactElement) {
@@ -238,21 +276,32 @@ function renderDesignFilesPanel(overrides: Partial<React.ComponentProps<typeof D
 
 describe('FileWorkspace quick switcher visual isolation', () => {
   it('moves focus into quick search and marks the document while the overlay is open', async () => {
+    installComposerIsolationCss();
+
     const composerLayer = document.createElement('div');
     composerLayer.className = 'chat-composer-fixed-layer';
     composerLayer.innerHTML = `
-      <div class="composer">
+      <div class="composer drag-active">
         <div class="composer-shell">
           <div class="composer-input-wrap">
-            <button type="button">Mock focused composer control</button>
+            <button class="composer-send" type="button">Mock focused composer control</button>
           </div>
         </div>
       </div>
     `;
     document.body.appendChild(composerLayer);
 
+    const composer = composerLayer.querySelector<HTMLElement>('.composer');
+    const composerShell = composerLayer.querySelector<HTMLElement>('.composer-shell');
     const composerControl = composerLayer.querySelector<HTMLButtonElement>('button');
+    if (!composer) throw new Error('Missing mock composer');
+    if (!composerShell) throw new Error('Missing mock composer shell');
     if (!composerControl) throw new Error('Missing mock composer control');
+
+    expect(getComputedStyle(composerLayer).pointerEvents).toBe('none');
+    expect(getComputedStyle(composer).pointerEvents).toBe('auto');
+    expect(getComputedStyle(composerControl).pointerEvents).toBe('auto');
+
     composerControl.focus();
     expect(document.activeElement).toBe(composerControl);
 
@@ -278,12 +327,22 @@ describe('FileWorkspace quick switcher visual isolation', () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(quickSearchInput);
     });
+    await waitFor(() => {
+      expect(getComputedStyle(composer).pointerEvents).toBe('none');
+    });
+    expect(getComputedStyle(composerLayer).pointerEvents).toBe('none');
+    expect(getComputedStyle(composerControl).pointerEvents).toBe('none');
+    expect(getComputedStyle(composerShell).boxShadow).toBe('none');
 
     fireEvent.keyDown(window, { key: 'Escape' });
 
     await waitFor(() => {
       expect(document.body.classList.contains('od-quick-switcher-open')).toBe(false);
     });
+    await waitFor(() => {
+      expect(getComputedStyle(composer).pointerEvents).toBe('auto');
+    });
+    expect(getComputedStyle(composerControl).pointerEvents).toBe('auto');
   });
 });
 

@@ -53,19 +53,53 @@ describe('workspace tabs chrome styles', () => {
   });
 
   it('keeps the fixed composer visually stable while quick search is open', () => {
+    const fixedLayer = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer',
+    );
+    const fixedComposer = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer .composer',
+    );
     const fixedShell = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer .composer-shell',
+    );
+    const fixedShellHover = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer .composer-shell:hover',
+    );
+    const fixedShellFocus = cssDeclarations(
       routinesCss,
       'body.od-quick-switcher-open .chat-composer-fixed-layer .composer-shell:focus-within',
     );
+    const fixedShellDragActive = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer .composer.drag-active .composer-shell',
+    );
     const fixedInput = cssDeclarations(
+      routinesCss,
+      'body.od-quick-switcher-open .chat-composer-fixed-layer .composer-input-wrap',
+    );
+    const fixedInputFocus = cssDeclarations(
       routinesCss,
       'body.od-quick-switcher-open .chat-composer-fixed-layer .composer-input-wrap:focus-within',
     );
 
+    expect(ruleValue(fixedLayer, 'pointer-events')).toBe('none');
+    expect(ruleValue(fixedComposer, 'pointer-events')).toBe('none');
     expect(ruleValue(fixedShell, 'border-color')).toBe('var(--border)');
     expect(ruleValue(fixedShell, 'box-shadow')).toBe('none');
+    expect(ruleValue(fixedShellHover, 'border-color')).toBe('var(--border)');
+    expect(ruleValue(fixedShellHover, 'box-shadow')).toBe('none');
+    expect(ruleValue(fixedShellFocus, 'border-color')).toBe('var(--border)');
+    expect(ruleValue(fixedShellFocus, 'box-shadow')).toBe('none');
+    expect(ruleValue(fixedShellDragActive, 'border-color')).toBe('var(--border)');
+    expect(ruleValue(fixedShellDragActive, 'box-shadow')).toBe('none');
     expect(ruleValue(fixedInput, 'background')).toBe('var(--bg-panel)');
     expect(ruleValue(fixedInput, 'border-color')).toBe('var(--border-soft)');
+    expect(ruleValue(fixedInputFocus, 'background')).toBe('var(--bg-panel)');
+    expect(ruleValue(fixedInputFocus, 'border-color')).toBe('var(--border-soft)');
   });
 
   it('uses hairline dividers for the tab chrome and entry rail', () => {
