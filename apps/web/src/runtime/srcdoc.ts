@@ -1593,6 +1593,12 @@ function meaningfulDomFallbackTarget(el) {
   function requestPreviewScrollRestore(){
     window.parent.postMessage({ type: 'od:preview-scroll-request' }, '*');
   }
+  function postPreviewWheel(ev){
+    var deltaY = Number(ev && ev.deltaY);
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    window.parent.postMessage({ type: 'od:preview-wheel', deltaY: deltaY }, '*');
+    ev.preventDefault();
+  }
   function findCommentTargetByIdentity(elementId, selector){
     var el = null;
     if (selector) {
@@ -1953,6 +1959,7 @@ function meaningfulDomFallbackTarget(el) {
     schedulePostTargets();
     schedulePostPreviewScroll();
   }, true);
+  document.addEventListener('wheel', postPreviewWheel, { passive: false });
   var mo = new MutationObserver(schedulePostTargets);
   // childList only — NOT attributes/characterData. Re-walking every annotated
   // target on every attribute/text mutation made an animated artifact (inline

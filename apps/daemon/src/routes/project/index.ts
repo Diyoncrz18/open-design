@@ -157,6 +157,12 @@ const URL_PREVIEW_SCROLL_BRIDGE = `<script data-od-url-scroll-bridge>
   function requestRestore(){
     window.parent.postMessage({ type: 'od:preview-scroll-request' }, '*');
   }
+  function postWheel(ev){
+    var deltaY = Number(ev && ev.deltaY);
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    window.parent.postMessage({ type: 'od:preview-wheel', deltaY: deltaY }, '*');
+    ev.preventDefault();
+  }
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
     if (!data || !data.type) return;
@@ -173,6 +179,7 @@ const URL_PREVIEW_SCROLL_BRIDGE = `<script data-od-url-scroll-bridge>
   });
   window.addEventListener('scroll', schedule, true);
   document.addEventListener('scroll', schedule, true);
+  document.addEventListener('wheel', postWheel, { passive: false });
   window.addEventListener('resize', schedule);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function(){

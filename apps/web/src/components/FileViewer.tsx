@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { APP_CHROME_FILE_ACTIONS_ID, APP_CHROME_FILE_ACTIONS_SELECTOR } from './AppChromeHeader';
@@ -282,6 +282,7 @@ const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
     titleKey: 'fileViewer.viewportMobileTitle',
   },
 ];
+const PREVIEW_ZOOM_LEVELS = [50, 75, 100, 125, 150, 200] as const;
 
 function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
@@ -920,6 +921,18 @@ function previewScaleShellStyle(
   };
 }
 
+function previewZoomFromWheel(currentZoom: number, deltaY: number): number {
+  if (!Number.isFinite(deltaY) || deltaY === 0) return currentZoom;
+  if (deltaY < 0) {
+    return PREVIEW_ZOOM_LEVELS.find((level) => level > currentZoom) ?? PREVIEW_ZOOM_LEVELS[PREVIEW_ZOOM_LEVELS.length - 1]!;
+  }
+  for (let index = PREVIEW_ZOOM_LEVELS.length - 1; index >= 0; index -= 1) {
+    const level = PREVIEW_ZOOM_LEVELS[index]!;
+    if (level < currentZoom) return level;
+  }
+  return PREVIEW_ZOOM_LEVELS[0]!;
+}
+
 function manualEditPreviewShellStyle(
   viewport: PreviewViewportId,
   previewScale: number,
@@ -1503,6 +1516,11 @@ export function LiveArtifactViewer({
     [projectId, liveArtifact.artifactId, reloadKey],
   );
   const previewScale = zoom / 100;
+  const handlePreviewWheel = useCallback((event: ReactWheelEvent<HTMLElement>) => {
+    if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+    event.preventDefault();
+    setZoom((current) => previewZoomFromWheel(current, event.deltaY));
+  }, []);
 
   // Instrument the live-artifact iframe so failed loads — usually a
   // missing artifact file or a stuck `od://` resolver — surface in
@@ -1703,7 +1721,7 @@ export function LiveArtifactViewer({
               </button>
               {zoomMenuOpen && mode === 'preview' ? (
                 <div className="zoom-menu-popover" role="menu">
-                  {[50, 75, 100, 125, 150, 200].map((level) => (
+                  {PREVIEW_ZOOM_LEVELS.map((level) => (
                     <button
                       key={level}
                       type="button"
@@ -1787,6 +1805,7 @@ export function LiveArtifactViewer({
           data-active={mode === 'preview' ? 'true' : 'false'}
           aria-hidden={mode === 'preview' ? undefined : true}
           style={previewViewportStyle(previewViewport, previewScale, previewBodySize)}
+          onWheel={handlePreviewWheel}
         >
           <div className="preview-frame-clip">
             <div style={previewScaleShellStyle(previewViewport, previewScale)}>
@@ -6122,6 +6141,16 @@ function HtmlViewer({
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
   const previewStateKey = `${projectId}:${file.name}`;
   const previewScale = zoom / 100;
+  const applyPreviewWheelZoom = useCallback((deltaY: number) => {
+    if (drawOverlayOpen) return;
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    setZoom((current) => previewZoomFromWheel(current, deltaY));
+  }, [drawOverlayOpen]);
+  const handlePreviewWheel = useCallback((event: ReactWheelEvent<HTMLElement>) => {
+    if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+    event.preventDefault();
+    applyPreviewWheelZoom(event.deltaY);
+  }, [applyPreviewWheelZoom]);
   const localCommentSideDockActive = commentPanelOpen && !commentPortalHost;
   const boardPreviewCanvasSize = commentPreviewCanvasSize(previewBodySize, {
     boardMode: localCommentSideDockActive,
@@ -6901,8 +6930,14 @@ function HtmlViewer({
         frameTop?: number;
         canvasLeft?: number;
         canvasTop?: number;
+        deltaY?: number;
       } | null;
-      if (!data || data.type !== 'od:preview-scroll') return;
+      if (!data) return;
+      if (data.type === 'od:preview-wheel') {
+        applyPreviewWheelZoom(Number(data.deltaY || 0));
+        return;
+      }
+      if (data.type !== 'od:preview-scroll') return;
       if (previewScrollRestoreRef.current && Number(data.canvasLeft || 0) === 0 && Number(data.canvasTop || 0) === 0) return;
       if (
         previewScrollPositionRef.current.canvasLeft !== 0 ||
@@ -6979,7 +7014,7 @@ function HtmlViewer({
       window.removeEventListener('message', onRestoreRequest);
       window.removeEventListener('message', onDcViewportMessage);
     };
-  }, [isActivePreviewIframeSource, isOurPreviewIframeSource]);
+  }, [applyPreviewWheelZoom, isActivePreviewIframeSource, isOurPreviewIframeSource]);
 
   useEffect(() => {
     if (!effectiveDeck) {
@@ -10198,7 +10233,7 @@ function HtmlViewer({
                   </button>
                   {zoomMenuOpen ? (
                     <div className="zoom-menu-popover" role="menu">
-                      {[50, 75, 100, 125, 150, 200].map((level) => (
+                      {PREVIEW_ZOOM_LEVELS.map((level) => (
                         <button
                           key={level}
                           type="button"
@@ -10393,7 +10428,7 @@ function HtmlViewer({
                     {source !== null && mode === 'preview' ? (
                       <>
                         <div className="viewer-toolbar-more-separator" role="separator" />
-                        {[50, 75, 100, 125, 150, 200].map((level) => (
+                        {PREVIEW_ZOOM_LEVELS.map((level) => (
                           <button
                             key={level}
                             type="button"
@@ -10791,6 +10826,7 @@ function HtmlViewer({
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
             style={previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions)}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}
+            onWheel={handlePreviewWheel}
           >
             {manualEditPanel}
             {manualEditHoverAffordance}

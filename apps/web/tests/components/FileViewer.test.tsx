@@ -3788,6 +3788,71 @@ describe('FileViewer tweaks toolbar', () => {
     expect((await screen.findByRole('button', { name: 'Preview viewport' })).textContent).toContain('Tablet');
   });
 
+  it('updates HTML preview zoom when the mouse wheel zooms over the preview', async () => {
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    const layout = screen.getByTestId('comment-preview-layout');
+    const shell = screen
+      .getByTestId('comment-preview-canvas')
+      .querySelector<HTMLElement>('.comment-frame-clip > div');
+
+    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+    expect(shell?.style.transform).toBe('scale(1)');
+
+    fireEvent.wheel(layout, { deltaY: -100 });
+
+    expect(screen.getByRole('button', { name: '125%' })).toBeTruthy();
+    expect(shell?.style.transform).toBe('scale(1.25)');
+
+    fireEvent.wheel(layout, { deltaY: 100 });
+
+    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+    expect(shell?.style.transform).toBe('scale(1)');
+
+    fireEvent.wheel(layout, { ctrlKey: true, deltaY: -100 });
+
+    expect(screen.getByRole('button', { name: '125%' })).toBeTruthy();
+    expect(shell?.style.transform).toBe('scale(1.25)');
+
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od:preview-wheel', deltaY: 100 },
+      }));
+    });
+
+    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+    expect(shell?.style.transform).toBe('scale(1)');
+  });
+
+  it('keeps Draw overlay wheel scrolling from changing preview zoom', () => {
+    const { container } = render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    const canvas = container.querySelector('canvas');
+    expect(canvas).toBeTruthy();
+
+    fireEvent.wheel(canvas!, { deltaY: -100 });
+
+    expect(screen.getByRole('button', { name: '100%' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '125%' })).toBeNull();
+  });
+
   it('keeps the Draw bar open after queueing an annotation', () => {
     render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}

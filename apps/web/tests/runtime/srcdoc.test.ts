@@ -153,6 +153,7 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).toContain('MutationObserver(schedulePostTargets)');
     expect(srcdoc).toContain('schedulePostPreviewScroll');
     expect(srcdoc).toContain("type: 'od:preview-scroll'");
+    expect(srcdoc).toContain("type: 'od:preview-wheel'");
     expect(srcdoc).toContain("type: 'od:preview-scroll-request'");
     expect(srcdoc).toContain("data.type === 'od:preview-scroll-by'");
     expect(srcdoc).toContain('previewScrollBy(data.left, data.top)');
