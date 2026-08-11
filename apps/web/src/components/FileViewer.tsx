@@ -3309,6 +3309,20 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 }
 
+function isCommentShortcutOwnedTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (isEditableKeyboardTarget(target)) return true;
+  return target.closest(
+    '[contenteditable]:not([contenteditable="false"]), .composer, .comment-popover-composer',
+  ) !== null;
+}
+
+function modalOwnsKeyboardInput(): boolean {
+  return document.querySelector(
+    '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]',
+  ) !== null;
+}
+
 function normalizeDeckVisualSource(source: string): string {
   return source
     .replace(/\s+(?=<\/body\s*>)/gi, '')
@@ -13154,6 +13168,37 @@ function HtmlViewer({
     activateComment();
   }
 
+  const activateCommentToolRef = useRef(activateCommentTool);
+  activateCommentToolRef.current = activateCommentTool;
+  useEffect(() => {
+    if (
+      !workspaceActive
+      || mode !== 'preview'
+      || inTabPresent
+      || presentFullscreenPending
+    ) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented
+        || event.isComposing
+        || event.repeat
+        || event.code !== 'KeyC'
+        || !event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.shiftKey
+        || isCommentShortcutOwnedTarget(event.target)
+        || isCommentShortcutOwnedTarget(document.activeElement)
+        || modalOwnsKeyboardInput()
+      ) return;
+      event.preventDefault();
+      event.stopPropagation();
+      activateCommentToolRef.current();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [inTabPresent, mode, presentFullscreenPending, workspaceActive]);
+
   function activateCommentCreateTool() {
     fireArtifactToolbarClick('comment');
     capturePreviewScrollPosition();
@@ -14768,10 +14813,11 @@ function HtmlViewer({
                   type="button"
                   className={`viewer-action viewer-action-icon viewer-comment-toggle od-tooltip${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
                   data-testid="board-mode-toggle"
-                  data-tooltip={t('fileViewer.comment')}
+                  data-tooltip={`${t('fileViewer.comment')} (Alt+C)`}
                   data-tooltip-placement="bottom"
-                  title={t('fileViewer.comment')}
+                  title={`${t('fileViewer.comment')} (Alt+C)`}
                   aria-label={t('fileViewer.comment')}
+                  aria-keyshortcuts="Alt+C"
                   aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
                   onClick={activateCommentTool}
                 >
