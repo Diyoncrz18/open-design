@@ -57,7 +57,10 @@ import {
   type VelaLoginStatus,
 } from '../providers/daemon';
 import { amrProfileBadgeLabel } from '../runtime/amr-guidance';
-import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
+import {
+  isRetiredLocalCliAgentId,
+  isVisibleLocalCliAgent,
+} from '../utils/visibleAgents';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
@@ -1408,7 +1411,10 @@ export function shouldEnableSettingsSave(
   if (activeSection !== 'execution') return true;
   if (cfg.mode === 'daemon') {
     return Boolean(
-      cfg.agentId && agents.find((a) => a.id === cfg.agentId)?.available,
+      cfg.agentId &&
+      agents.find(
+        (a) => a.id === cfg.agentId && isVisibleLocalCliAgent(a),
+      )?.available,
     );
   }
   return Boolean(cfg.apiKey.trim() && cfg.model.trim() && isBaseUrlValid);
@@ -2083,7 +2089,10 @@ export function SettingsDialog({
 
   const selectedMemoryChatAgent =
     cfg.mode === 'daemon' && cfg.agentId
-      ? agents.find((agent) => agent.id === cfg.agentId) ?? null
+      ? agents.find(
+          (agent) =>
+            agent.id === cfg.agentId && isVisibleLocalCliAgent(agent),
+        ) ?? null
       : null;
   const selectedMemoryChatModel =
     cfg.mode === 'daemon' && cfg.agentId
@@ -2333,7 +2342,9 @@ export function SettingsDialog({
       const nextAgents = Array.isArray(refreshed) ? refreshed : agents;
       setAgentRescanNotice({
         kind: 'success',
-        count: nextAgents.filter((a) => a.available).length,
+        count: nextAgents.filter(
+          (a) => a.available && isVisibleLocalCliAgent(a),
+        ).length,
       });
     } catch {
       setAgentRescanNotice({ kind: 'error' });
@@ -2470,7 +2481,12 @@ export function SettingsDialog({
     if (agentTestState.status === 'running') {
       return;
     }
-    const selected = agents.find((a) => a.id === cfg.agentId && a.available);
+    const selected = agents.find(
+      (a) =>
+        a.id === cfg.agentId &&
+        a.available &&
+        isVisibleLocalCliAgent(a),
+    );
     if (!selected) return;
     const choice = cfg.agentModels?.[selected.id] ?? {};
     const controller = new AbortController();
@@ -3848,6 +3864,10 @@ export function SettingsDialog({
   };
   const activeHeader = sectionHeader[activeSection];
   const visibleAgents = agents.filter(isVisibleLocalCliAgent);
+  const retiredGeminiCliSelected = isRetiredLocalCliAgentId(cfg.agentId);
+  const googleGeminiByokProvider = BYOK_PROVIDER_PRESETS.find(
+    (provider) => provider.id === 'google-ai-studio',
+  );
   const installedAgents = orderAgentsWithOpenDesignFirst(
     visibleAgents.filter((a) => a.available),
   );
@@ -4525,6 +4545,24 @@ export function SettingsDialog({
                 </div>
               ) : (
                 <>
+                  {retiredGeminiCliSelected ? (
+                    <div
+                      className="agent-install-guide"
+                      data-testid="settings-retired-gemini-cli-guidance"
+                    >
+                      <p className="hint">
+                        {t('settings.retiredGeminiCliGuidance')}
+                      </p>
+                      {googleGeminiByokProvider ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => setByokProvider(googleGeminiByokProvider)}
+                        >
+                          {`${googleGeminiByokProvider.title} · ${t('settings.onboardingByokTitle')}`}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="agent-group">
                     <div className="agent-group-head">
                       <h4>
@@ -5208,7 +5246,8 @@ export function SettingsDialog({
                     selected, the guide has done its job and only adds
                     noise.
                   */}
-                  {!agents.find(
+                  {!retiredGeminiCliSelected &&
+                  !visibleAgents.find(
                     (a) => a.id === cfg.agentId && a.available,
                   ) ? (
                     <div className="agent-install-guide">
@@ -5227,7 +5266,10 @@ export function SettingsDialog({
               )}
               {(() => {
                 const selected = agents.find(
-                  (a) => a.id === cfg.agentId && a.available,
+                  (a) =>
+                    a.id === cfg.agentId &&
+                    a.available &&
+                    isVisibleLocalCliAgent(a),
                 );
                 if (!selected) return null;
                 const hasModels =
