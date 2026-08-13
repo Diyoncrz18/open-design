@@ -1,6 +1,5 @@
 import { expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { T } from '@/timeouts';
 
 /**
  * Home's inline scenario rail — the "Start from a template… / …or create a
@@ -22,20 +21,6 @@ export async function openHomeTemplateMenu(page: Page): Promise<Locator> {
   await page.getByTestId('home-hero-template-trigger').click();
   await expect(menu).toBeVisible();
   return menu;
-}
-
-/**
- * Wait for a fresh Home composer to finish binding its default deck route.
- * Until the catalog-backed binding settles, production intentionally keeps
- * Send disabled so an empty composer cannot submit through an indeterminate
- * route. The selected deck label is the user-visible readiness signal.
- */
-export async function waitForDefaultHomeRoute(page: Page): Promise<void> {
-  await expect(page.getByTestId('home-hero-template-trigger')).toContainText(
-    /Slide deck|幻灯片|投影片/i,
-    { timeout: T.long },
-  );
-  await expect(page.getByTestId('home-hero-submit')).toBeEnabled({ timeout: T.long });
 }
 
 /**

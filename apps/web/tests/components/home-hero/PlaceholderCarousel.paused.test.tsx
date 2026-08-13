@@ -21,23 +21,6 @@ const SCENARIOS = [
 ] as const;
 
 describe('PlaceholderCarousel — paused while the editor has focus (#118)', () => {
-  it('still reports the active scenario while animation is paused', () => {
-    vi.useFakeTimers();
-    const onScenarioChange = vi.fn();
-
-    render(
-      <PlaceholderCarousel
-        scenarios={[...SCENARIOS]}
-        active
-        paused
-        onScenarioChange={onScenarioChange}
-      />,
-    );
-
-    expect(onScenarioChange).toHaveBeenCalledWith(SCENARIOS[0]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it('renders nothing and schedules no timer once paused', () => {
     vi.useFakeTimers();
     const { container, rerender } = render(
@@ -69,6 +52,20 @@ describe('PlaceholderCarousel — paused while the editor has focus (#118)', () 
     // passing must not bring any text back under the caret.
     typeAFewCharacters();
     expect(container.textContent).toBe('');
+  });
+
+  it('reports the current scenario while paused so empty-composer Send stays enabled', () => {
+    const onScenarioChange = vi.fn();
+    render(
+      <PlaceholderCarousel
+        scenarios={[...SCENARIOS]}
+        active
+        paused
+        onScenarioChange={onScenarioChange}
+      />,
+    );
+
+    expect(onScenarioChange).toHaveBeenCalledWith(SCENARIOS[0]);
   });
 
   it('keeps animating while unpaused', () => {

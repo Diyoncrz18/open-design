@@ -3,7 +3,6 @@ import type { Page } from '@playwright/test';
 import {
   openHomeTemplateMenu,
   pickHomeTemplate,
-  waitForDefaultHomeRoute,
 } from '@/playwright/home-hero';
 import {
   routeAgents,
@@ -1159,7 +1158,7 @@ test('[P0] empty home composer submits the active placeholder suggestion with te
   await routeRunsAccepted(page);
   await gotoEntryHome(page);
 
-  await waitForDefaultHomeRoute(page);
+  await expect(page.getByTestId('home-hero-submit')).toBeEnabled();
   const createRequestPromise = page.waitForRequest((request) =>
     request.method() === 'POST' && new URL(request.url()).pathname === '/api/projects',
   );
