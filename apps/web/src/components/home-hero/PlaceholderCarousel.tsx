@@ -74,7 +74,10 @@ export function PlaceholderCarousel({ scenarios, active, paused = false, onScena
 
   // Report the active scenario up on every index change (incl. first show).
   useEffect(() => {
-    if (!active || paused || scenarios.length === 0) return;
+    // Pausing only hides and stops the decorative typewriter. The parent still
+    // needs the selected scenario so an empty, focused composer keeps its
+    // deterministic submit route.
+    if (!active || scenarios.length === 0) return;
     const scenario = scenarios[state.index % scenarios.length];
     if (scenario && reportedIndexRef.current !== state.index) {
       reportedIndexRef.current = state.index;

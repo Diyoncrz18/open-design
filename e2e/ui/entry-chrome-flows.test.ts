@@ -1215,7 +1215,7 @@ test('[P0] @critical home hero input keeps Shift+Enter as a newline and submits 
   const input = page.getByTestId('home-hero-input');
   const submit = page.getByTestId('home-hero-submit');
 
-  await expect(submit).toBeEnabled();
+  await waitForDefaultHomeRoute(page);
   await input.click();
   await input.fill('Line one');
   await input.press('Shift+Enter');

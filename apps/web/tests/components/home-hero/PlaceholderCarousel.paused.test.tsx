@@ -21,6 +21,23 @@ const SCENARIOS = [
 ] as const;
 
 describe('PlaceholderCarousel — paused while the editor has focus (#118)', () => {
+  it('still reports the active scenario while animation is paused', () => {
+    vi.useFakeTimers();
+    const onScenarioChange = vi.fn();
+
+    render(
+      <PlaceholderCarousel
+        scenarios={[...SCENARIOS]}
+        active
+        paused
+        onScenarioChange={onScenarioChange}
+      />,
+    );
+
+    expect(onScenarioChange).toHaveBeenCalledWith(SCENARIOS[0]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('renders nothing and schedules no timer once paused', () => {
     vi.useFakeTimers();
     const { container, rerender } = render(
