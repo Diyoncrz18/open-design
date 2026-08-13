@@ -3313,7 +3313,7 @@ function isCommentShortcutOwnedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (isEditableKeyboardTarget(target)) return true;
   return target.closest(
-    '[contenteditable]:not([contenteditable="false"]), .composer, .comment-popover-composer',
+    '[contenteditable]:not([contenteditable="false"]), [role="textbox"], .composer, .comment-popover-composer, .monaco-editor',
   ) !== null;
 }
 
@@ -10206,10 +10206,26 @@ function HtmlViewer({
     frame: HTMLIFrameElement;
     generation: string;
   } | null>(null);
+  const commentShortcutEnabled = (
+    workspaceActive
+    && mode === 'preview'
+    && !inTabPresent
+    && !presentFullscreenPending
+  );
+  const postCommentShortcutState = useCallback((
+    target: HTMLIFrameElement | null,
+    enabled = commentShortcutEnabled,
+  ) => {
+    target?.contentWindow?.postMessage({
+      type: 'od:comment-shortcut-state',
+      enabled,
+    }, '*');
+  }, [commentShortcutEnabled]);
   const replayPreviewBridgeModes = useCallback((target: HTMLIFrameElement | null) => {
-    if (!workspaceActive) return;
     const win = target?.contentWindow;
     if (!win) return;
+    postCommentShortcutState(target);
+    if (!workspaceActive) return;
     const ready = readySrcDocTransportRef.current;
     if (
       target === srcDocPreviewIframeRef.current
@@ -10234,10 +10250,18 @@ function HtmlViewer({
     boardTool,
     inspectMode,
     manualEditMode,
+    postCommentShortcutState,
     postAndConsumePreviewRuntimeState,
     selectedManualEditTarget?.id,
     workspaceActive,
   ]);
+  useEffect(() => {
+    const frames = [urlPreviewIframeRef.current, srcDocPreviewIframeRef.current];
+    for (const frame of frames) postCommentShortcutState(frame);
+    return () => {
+      for (const frame of frames) postCommentShortcutState(frame, false);
+    };
+  }, [postCommentShortcutState, srcDoc, useUrlLoadPreview]);
   // Only materialized while the in-tab presentation overlay is up — building
   // it eagerly would re-run buildSrcdoc on every source edit for a document
   // nobody is presenting.
@@ -13228,12 +13252,21 @@ function HtmlViewer({
   const activateCommentToolRef = useRef(activateCommentTool);
   activateCommentToolRef.current = activateCommentTool;
   useEffect(() => {
-    if (
-      !workspaceActive
-      || mode !== 'preview'
-      || inTabPresent
-      || presentFullscreenPending
-    ) return;
+    if (!commentShortcutEnabled) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown } | null;
+      if (
+        data?.type !== 'od:comment-shortcut'
+        || !isActivePreviewIframeSource(event.source)
+        || modalOwnsKeyboardInput()
+      ) return;
+      activateCommentToolRef.current();
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [commentShortcutEnabled, isActivePreviewIframeSource]);
+  useEffect(() => {
+    if (!commentShortcutEnabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented
@@ -13254,7 +13287,7 @@ function HtmlViewer({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [inTabPresent, mode, presentFullscreenPending, workspaceActive]);
+  }, [commentShortcutEnabled]);
 
   function activateCommentCreateTool(returnFocusTarget?: HTMLElement | null) {
     if (returnFocusTarget) commentPanelReturnFocusRef.current = returnFocusTarget;
