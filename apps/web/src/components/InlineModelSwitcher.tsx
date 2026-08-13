@@ -76,6 +76,7 @@ import {
   AMR_LOGIN_STARTUP_SETTLE_MS,
   amrLoginPollOutcome,
   amrLoginStatusEventReason,
+  isAmrSessionAuthenticated,
   notifyAmrLoginStatusChanged,
 } from './amrLoginPolling';
 import { orderAgentsWithOpenDesignFirst } from './agentOrdering';
@@ -317,7 +318,7 @@ export function InlineModelSwitcher({
       const pendingStartup =
         amrLoginStartedAtRef.current !== null &&
         Date.now() - amrLoginStartedAtRef.current < AMR_LOGIN_STARTUP_SETTLE_MS;
-      if (next.loggedIn) {
+      if (isAmrSessionAuthenticated(next)) {
         amrLoginStartedAtRef.current = null;
         setAmrLoginPending(false);
       } else if (next.loginInFlight) {
@@ -557,7 +558,7 @@ export function InlineModelSwitcher({
         { metricsConsent: config.telemetry?.metrics === true },
       );
       const latest = await refreshAmrStatus();
-      if (latest?.loggedIn) return;
+      if (isAmrSessionAuthenticated(latest)) return;
       await handleAmrSignIn(attribution);
     },
     [
@@ -670,7 +671,7 @@ export function InlineModelSwitcher({
         if (next?.authAttemptId) {
           amrAuthAttemptIdRef.current = next.authAttemptId;
         }
-        if (next?.loggedIn) {
+        if (isAmrSessionAuthenticated(next)) {
           amrLoginStartedAtRef.current = null;
           stopAmrPolling();
           return;
@@ -728,6 +729,14 @@ export function InlineModelSwitcher({
       : configuredModelId ?? defaultAgentModelId(currentAgent);
   const currentModelOption =
     currentAgentModels.find((m) => m.id === currentModelId) ?? null;
+  // `agentId` and `agentModels` intentionally retain the last local-agent
+  // choice while BYOK is active so switching back restores that choice. Do
+  // not let campaign UI read that dormant AMR state: in BYOK mode the visible
+  // model comes from `config.model` and usage is billed by the user's provider.
+  const deepSeekCampaignVisibleForCurrentExecution =
+    campaignVisibility.visible
+    && config.mode === 'daemon'
+    && currentAgent?.id === 'amr';
 
   useEffect(() => {
     if (!currentAgentId || !normalizedCurrentModelId) return;
@@ -801,7 +810,7 @@ export function InlineModelSwitcher({
     }
     if (
       !compact
-      || !campaignVisibility.visible
+      || !deepSeekCampaignVisibleForCurrentExecution
       || campaignBenefitTrackedForOpenRef.current
       || !compactModelRows.some(({ model }) => isDeepSeekV4FlashCampaignModel(model.id))
     ) {
@@ -819,9 +828,9 @@ export function InlineModelSwitcher({
   }, [
     analytics.track,
     campaignNeedsUpgrade,
-    campaignVisibility.visible,
     compact,
     compactModelRows,
+    deepSeekCampaignVisibleForCurrentExecution,
     open,
   ]);
 
@@ -868,7 +877,7 @@ export function InlineModelSwitcher({
     config.installationId,
     config.telemetry?.metrics,
   ]);
-  const amrLoggedIn = amrStatus?.loggedIn === true;
+  const amrLoggedIn = isAmrSessionAuthenticated(amrStatus);
 
   useEffect(() => {
     if (!amrLoggedIn || workspaceContext?.workspaceType === 'team') {
@@ -1162,7 +1171,8 @@ export function InlineModelSwitcher({
               aria-hidden="true"
             />
             <span className="inline-switcher__chip-model-name">{chipModel}</span>
-            {campaignVisibility.visible && isDeepSeekV4FlashCampaignModel(currentModelId) ? (
+            {deepSeekCampaignVisibleForCurrentExecution
+              && isDeepSeekV4FlashCampaignModel(currentModelId) ? (
               <span
                 className={`inline-switcher__campaign-badge od-tooltip${campaignBadgeStateClass}`}
                 data-tooltip={campaignModelTooltip}
@@ -1390,7 +1400,7 @@ export function InlineModelSwitcher({
                     // A model above the caller's plan is shown, but honestly:
                     // disabled with the reason the settings picker already uses,
                     // never as a normal row whose click gets reverted.
-                    const campaignModel = campaignVisibility.visible
+                    const campaignModel = deepSeekCampaignVisibleForCurrentExecution
                       && isDeepSeekV4FlashCampaignModel(m.id);
                     const lockedHint = selectable
                       ? null
