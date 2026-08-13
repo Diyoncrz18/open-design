@@ -2,7 +2,7 @@ import { expect, test } from '@/playwright/suite';
 import { ensureRailOpen, openNewProjectModal } from '@/playwright/rail';
 import { settingsSurface } from '@/playwright/amr';
 import { expectStableCount } from '@/playwright/assertions';
-import { openHomeTemplateMenu } from '@/playwright/home-hero';
+import { openHomeTemplateMenu, waitForDefaultHomeRoute } from '@/playwright/home-hero';
 import type {
   WorkspaceCollabContext,
   WorkspaceDirectoryItem,
@@ -90,8 +90,9 @@ test('[P0] @critical entry chrome exposes the primary home creation surface and 
   await expect(page.locator('.entry-brand')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-input')).toBeVisible();
   await expect(page.getByTestId('home-hero-plus-trigger')).toBeVisible();
-  // Empty input can still run the active placeholder-carousel suggestion.
-  await expect(page.getByTestId('home-hero-submit')).toBeEnabled();
+  // Empty input can run the active placeholder only after the fresh-Home
+  // default deck route has settled.
+  await waitForDefaultHomeRoute(page);
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
   await expect(page.getByTestId('home-hero-design-system-picker')).toBeVisible();
   await expect(page.getByTestId('working-dir-picker')).toBeVisible();
