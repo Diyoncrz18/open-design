@@ -547,6 +547,12 @@ export interface Dict {
   'settings.getStarted': string;
   'settings.envConfigure': string;
   'settings.localCli': string;
+  'settings.dshSetupTitle': string;
+  'settings.dshSetupDescription': string;
+  'settings.dshSetupNote': string;
+  'settings.dshSetupConfirm': string;
+  'settings.dshSetupInstalling': string;
+  'settings.dshSetupRequired': string;
   'settings.anthropicApi': string;
   'settings.noAgentSelected': string;
   'settings.language': string;
@@ -1121,6 +1127,7 @@ export interface Dict {
   'entry.discordAria': string;
   'entry.discordAriaWithOnline': string;
   'entry.discordOnlineLabel': string;
+  'entry.feishuAria': string;
   'entry.mailAria': string;
   'entry.accountSettings': string;
   'chat.collapsePane': string;
@@ -2810,6 +2817,7 @@ export interface Dict {
   'inlineSwitcher.missingApiKey': string;
   'inlineSwitcher.openFullSettings': string;
   'inlineSwitcher.customSuffix': string;
+  'inlineSwitcher.unlimitedBadge': string;
 
   // Project view / chat pane / composer
   'project.backToProjects': string;
@@ -2886,6 +2894,7 @@ export interface Dict {
   'chat.runError.title.connectionDropped': string;
   'chat.runError.title.signInRequired': string;
   'chat.runError.title.rateLimited': string;
+  'chat.runError.title.modelWindowLimit': string;
   'chat.runError.title.cliMissing': string;
   'chat.runError.title.promptTooLarge': string;
   'chat.runError.title.modelUnavailable': string;
@@ -2907,6 +2916,8 @@ export interface Dict {
   'chat.runError.promptTooLargeMessage': string;
   'chat.runError.modelUnavailableMessage': string;
   'chat.runError.rateLimitedMessage': string;
+  'chat.runError.modelWindowLimitMessage': string;
+  'chat.runError.modelWindowLimitMessageNoTime': string;
   'chat.runError.upstreamUnavailableMessage': string;
   'chat.runError.toolLoopMessage': string;
   'chat.runError.outputInvalidMessage': string;
@@ -4330,6 +4341,7 @@ export interface Dict {
   'assistant.role': string;
   'assistant.workingLabel': string;
   'assistant.doneLabel': string;
+  'assistant.canceledLabel': string;
   'assistant.copyMarkdown': string;
   'assistant.forkConversation': string;
   'assistant.forkingConversation': string;
@@ -5420,4 +5432,25 @@ export interface Dict {
   'campaign.deepseekV4Flash.restricted.tooltip': string;
   'campaign.deepseekV4Flash.workbenchBadge': string;
   'campaign.deepseekV4Flash.workbenchBadgeAria': string;
+
+  'experienceSurvey.tag': string;
+  'experienceSurvey.close': string;
+  'experienceSurvey.recommendation': string;
+  'experienceSurvey.recommendationLow': string;
+  'experienceSurvey.recommendationHigh': string;
+  'experienceSurvey.improvement': string;
+  'experienceSurvey.improvement.wrongOutput': string;
+  'experienceSurvey.improvement.falseDone': string;
+  'experienceSurvey.improvement.hardToUse': string;
+  'experienceSurvey.improvement.upgradePrompts': string;
+  'experienceSurvey.improvement.stuck': string;
+  'experienceSurvey.improvement.slow': string;
+  'experienceSurvey.improvement.looks': string;
+  'experienceSurvey.improvement.regression': string;
+  'experienceSurvey.improvement.other': string;
+  'experienceSurvey.otherPlaceholder': string;
+  'experienceSurvey.submit': string;
+  'experienceSurvey.skip': string;
+  'experienceSurvey.thanksTitle': string;
+  'experienceSurvey.thanksBody': string;
 }
