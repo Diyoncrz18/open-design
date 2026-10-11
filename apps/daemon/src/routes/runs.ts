@@ -368,6 +368,15 @@ function seededUserMessageTurnMetadataFields(
   };
 }
 
+// The user turn a run seeds into its conversation (see prepareRunUserSeed).
+interface RunUserSeed {
+  id: string;
+  conversationId: string;
+  content: string;
+  attachments: ReturnType<typeof seededUserMessageAttachmentFields>;
+  turnMetadata: ReturnType<typeof seededUserMessageTurnMetadataFields>;
+}
+
 
 
 
@@ -1679,6 +1688,249 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
   }
 
+  // #5811: a run launched into a conversation records its user turn and an
+  // assistant pin there, whichever route started it. POST /api/runs and
+  // POST /api/chat share these steps, so a headless caller never gets the run's
+  // files next to an empty conversation.
+
+  // Headless / MCP clients often omit conversationId; bind the project's
+  // earliest conversation so the run has a chat home.
+  const bindDefaultProjectConversation = (meta: RunCreateMeta): boolean => {
+    if (
+      typeof meta.projectId !== 'string' ||
+      !meta.projectId ||
+      (typeof meta.conversationId === 'string' && meta.conversationId)
+    ) {
+      return false;
+    }
+    try {
+      const defaultConv = getFirstProjectConversation(db, meta.projectId);
+      if (defaultConv && typeof defaultConv.id === 'string' && defaultConv.id) {
+        meta.conversationId = defaultConv.id;
+        return true;
+      }
+    } catch (err) {
+      console.warn('[runs] mcp conversation fallback failed', err);
+    }
+    return false;
+  };
+
+  // A client-supplied userMessageId / assistantMessageId must name a row of
+  // that role in THIS conversation, or the run would pin/append/finalize a row
+  // it does not own (a user row in the same conversation, or an assistant row
+  // in another conversation) via the id-only writers (#6418 review). Sends the
+  // error and returns false when a pin is invalid.
+  const validateRunMessagePins = (meta: RunCreateMeta, res: ApiResponse): boolean => {
+    const clientUserMessageId =
+      typeof meta.userMessageId === 'string' && meta.userMessageId
+        ? meta.userMessageId
+        : null;
+    if (clientUserMessageId && !isSafeId(clientUserMessageId)) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'userMessageId is invalid');
+      return false;
+    }
+    if (clientUserMessageId && typeof meta.conversationId === 'string') {
+      const existingUserPin = db
+        .prepare(`SELECT role, conversation_id AS conversationId FROM messages WHERE id = ?`)
+        .get(clientUserMessageId) as
+        | { role?: unknown; conversationId?: unknown }
+        | undefined;
+      if (existingUserPin && existingUserPin.role !== 'user') {
+        sendApiError(
+          res,
+          409,
+          'INVALID_USER_MESSAGE',
+          'userMessageId must reference a user message',
+        );
+        return false;
+      }
+      if (
+        existingUserPin
+        && existingUserPin.conversationId !== meta.conversationId
+      ) {
+        sendApiError(
+          res,
+          409,
+          'IDEMPOTENCY_CONFLICT',
+          'userMessageId belongs to a different conversation',
+        );
+        return false;
+      }
+    }
+    const clientAssistantMessageId =
+      typeof meta.assistantMessageId === 'string' && meta.assistantMessageId
+        ? meta.assistantMessageId
+        : null;
+    if (clientAssistantMessageId && !isSafeId(clientAssistantMessageId)) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'assistantMessageId is invalid');
+      return false;
+    }
+    if (
+      clientUserMessageId
+      && clientAssistantMessageId
+      && clientUserMessageId === clientAssistantMessageId
+    ) {
+      sendApiError(
+        res,
+        400,
+        'BAD_REQUEST',
+        'userMessageId and assistantMessageId must be distinct',
+      );
+      return false;
+    }
+    if (clientAssistantMessageId) {
+      // Without a resolvable conversation there is nothing to validate the
+      // assistantMessageId against — the run would mutate a row it does not
+      // own via the id-only writers. Reject rather than guess (nettee).
+      if (typeof meta.conversationId !== 'string' || !meta.conversationId) {
+        sendApiError(res, 400, 'BAD_REQUEST', 'assistantMessageId requires a conversation');
+        return false;
+      }
+      const pinConversation = getConversation(db, meta.conversationId);
+      if (
+        !pinConversation
+        || (
+          typeof meta.projectId === 'string'
+          && meta.projectId
+          && pinConversation.projectId !== meta.projectId
+        )
+      ) {
+        sendApiError(res, 404, 'CONVERSATION_NOT_FOUND', 'conversation not found for project');
+        return false;
+      }
+      const existingAssistantPin = db
+        .prepare(
+          `SELECT role, conversation_id AS conversationId, run_id AS runId, run_status AS runStatus FROM messages WHERE id = ?`,
+        )
+        .get(clientAssistantMessageId) as
+        | { role?: unknown; conversationId?: unknown; runId?: unknown; runStatus?: unknown }
+        | undefined;
+      if (existingAssistantPin && existingAssistantPin.role !== 'assistant') {
+        sendApiError(
+          res,
+          409,
+          'INVALID_ASSISTANT_MESSAGE',
+          'assistantMessageId must reference an assistant message',
+        );
+        return false;
+      }
+      if (
+        existingAssistantPin
+        && existingAssistantPin.conversationId !== meta.conversationId
+      ) {
+        sendApiError(
+          res,
+          409,
+          'IDEMPOTENCY_CONFLICT',
+          'assistantMessageId belongs to a different conversation',
+        );
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Web always mints assistantMessageId client-side. API clients that already
+  // know conversationId (eval runners, scripts, MCP after the bind above) may
+  // omit it. Without a server-side pin, pinAssistantMessageOnRunCreate no-ops,
+  // lastMessageId stays null, and multi-turn native session resume is skipped
+  // (missing_cursor / resume_skipped). Call after validateRunMessagePins.
+  // A web client also supplies userMessageId so the run can pin the user
+  // row before the assistant row. Its separate best-effort PUT may arrive
+  // later; upserting the same id then preserves the position established
+  // here. Headless fallback keeps its existing generated-id behavior.
+  //
+  // The seed is prepared before the run is created but persisted only in
+  // `beforeClaimCommit` (a newly created run), so lost-response retries with
+  // clientRequestId do not duplicate user turns.
+  const prepareRunUserSeed = (
+    meta: RunCreateMeta,
+    requestBody: JsonRecord,
+    options: {
+      project: ProjectRecord | null;
+      conversationFallbackBound: boolean;
+      appliedPluginSnapshot?: AppliedPluginSnapshot | null;
+    },
+  ): RunUserSeed | null => {
+    const missingClientPin =
+      typeof meta.assistantMessageId !== 'string' || !meta.assistantMessageId;
+    const clientUserMessageId =
+      typeof meta.userMessageId === 'string' && meta.userMessageId
+        ? meta.userMessageId
+        : null;
+    if (
+      typeof meta.conversationId !== 'string' ||
+      !meta.conversationId ||
+      !(clientUserMessageId || missingClientPin || options.conversationFallbackBound)
+    ) {
+      return null;
+    }
+    if (missingClientPin) {
+      meta.assistantMessageId = randomUUID();
+    }
+    // Prefer original request currentPrompt (latest turn) whenever it is a
+    // string — including empty for attachments-only sends. Plugin resolution
+    // may replace meta.message with a rendered scenario brief for the run;
+    // seed visible chat content from requestBody so that internal brief never
+    // appears as user-authored content. message may be a full flattened
+    // ChatRequest transcript. Minimal MCP requests set both equal. Only fall
+    // back to message when currentPrompt is absent. Empty message is still
+    // seedable when attachment metadata is present so chips/annotations
+    // survive reload for omit-pin clients that leave currentPrompt unset.
+    const projectRoot = options.project && meta.projectId
+      ? resolveProjectDir(PROJECTS_DIR, meta.projectId, options.project.metadata)
+      : null;
+    const seededAttachments = seededUserMessageAttachmentFields(meta, projectRoot);
+    const hasSeedableAttachmentMetadata =
+      (seededAttachments.attachments?.length ?? 0) > 0 ||
+      (seededAttachments.commentAttachments?.length ?? 0) > 0;
+    const originalCurrentPrompt = requestBody.currentPrompt;
+    const originalMessage = requestBody.message;
+    const promptForUserMessage =
+      typeof originalCurrentPrompt === 'string'
+        ? originalCurrentPrompt
+        : typeof originalMessage === 'string' &&
+            (originalMessage.trim().length > 0 || hasSeedableAttachmentMetadata)
+          ? originalMessage
+          : null;
+    if (promptForUserMessage === null) return null;
+    return {
+      id: clientUserMessageId ?? randomUUID(),
+      conversationId: meta.conversationId,
+      content: promptForUserMessage,
+      attachments: seededAttachments,
+      turnMetadata: seededUserMessageTurnMetadataFields(
+        meta,
+        options.appliedPluginSnapshot ?? null,
+      ),
+    };
+  };
+
+  const persistRunUserSeed = (seed: RunUserSeed | null, projectId: unknown): void => {
+    if (!seed) return;
+    const now = Date.now();
+    upsertMessage(db, seed.conversationId, {
+      id: seed.id,
+      role: 'user',
+      content: seed.content,
+      startedAt: now,
+      endedAt: now,
+      // Same turn metadata the web client writes via PUT /messages so
+      // reload/retry keep sessionMode, runContext, and applied plugin.
+      ...seed.turnMetadata,
+      // Preserve request attachments/commentAttachments on the seeded user
+      // turn so reload/listMessages still show chips and annotation context
+      // for omit-pin / headless clients (same columns as PUT /messages).
+      ...seed.attachments,
+    });
+    // Bump parent project updatedAt so listProjects reorders (same as
+    // PUT /messages). Headless/API turns that never hit that route would
+    // otherwise leave the project buried under more recent activity.
+    if (typeof projectId === 'string' && projectId) {
+      updateProject(db, projectId, {});
+    }
+  };
+
   const handleRunCreate = async (req: ApiRequest, res: ApiResponse) => {
     if (ctx.lifecycle.isDaemonShuttingDown()) {
       return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
@@ -2408,24 +2660,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         );
       }
     }
-    // Headless / MCP clients often omit conversationId; bind the project's
-    // earliest conversation so the run has a chat home.
-    let conversationFallbackBound = false;
-    if (
-      typeof meta.projectId === 'string' &&
-      meta.projectId &&
-      (typeof meta.conversationId !== 'string' || !meta.conversationId)
-    ) {
-      try {
-        const defaultConv = getFirstProjectConversation(db, meta.projectId);
-        if (defaultConv && typeof defaultConv.id === 'string' && defaultConv.id) {
-          meta.conversationId = defaultConv.id;
-          conversationFallbackBound = true;
-        }
-      } catch (err) {
-        console.warn('[runs] mcp conversation fallback failed', err);
-      }
-    }
+    const conversationFallbackBound = bindDefaultProjectConversation(meta);
     const conversationSession =
       typeof meta.conversationId === 'string' && meta.conversationId
         ? getConversation(db, meta.conversationId)
@@ -2452,202 +2687,15 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       meta.sessionMode === 'chat' || meta.sessionMode === 'design' || meta.sessionMode === 'plan'
         ? normalizeConversationSessionMode(meta.sessionMode)
         : normalizeConversationSessionMode(conversationSession?.sessionMode);
-    // Web always mints assistantMessageId client-side. API clients that already
-    // know conversationId (eval runners, scripts, MCP after the bind above) may
-    // omit it. Without a server-side pin, pinAssistantMessageOnRunCreate no-ops,
-    // lastMessageId stays null, and multi-turn native session resume is skipped
-    // (missing_cursor / resume_skipped). Ownership is validated above first.
-    // A web client also supplies userMessageId so this route can pin the user
-    // row before the assistant row. Its separate best-effort PUT may arrive
-    // later; upserting the same id then preserves the position established
-    // here. Headless fallback keeps its existing generated-id behavior.
-    //
-    // Prepare seed payload before createOrReuse, but only persist when the run
-    // is newly created so lost-response retries with clientRequestId do not
-    // duplicate user turns.
-    const missingClientPin =
-      typeof meta.assistantMessageId !== 'string' || !meta.assistantMessageId;
-    const clientUserMessageId =
-      typeof meta.userMessageId === 'string' && meta.userMessageId
-        ? meta.userMessageId
-        : null;
-    if (clientUserMessageId && !isSafeId(clientUserMessageId)) {
-      return sendApiError(res, 400, 'BAD_REQUEST', 'userMessageId is invalid');
-    }
-    if (clientUserMessageId && typeof meta.conversationId === 'string') {
-      const existingUserPin = db
-        .prepare(`SELECT role, conversation_id AS conversationId FROM messages WHERE id = ?`)
-        .get(clientUserMessageId) as
-        | { role?: unknown; conversationId?: unknown }
-        | undefined;
-      if (existingUserPin && existingUserPin.role !== 'user') {
-        return sendApiError(
-          res,
-          409,
-          'INVALID_USER_MESSAGE',
-          'userMessageId must reference a user message',
-        );
-      }
-      if (
-        existingUserPin
-        && existingUserPin.conversationId !== meta.conversationId
-      ) {
-        return sendApiError(
-          res,
-          409,
-          'IDEMPOTENCY_CONFLICT',
-          'userMessageId belongs to a different conversation',
-        );
-      }
-    }
-    // The run's assistantMessageId must reference an assistant message in THIS
-    // conversation, or the run would pin/append/finalize a row it does not own
-    // (a user row in the same conversation, or an assistant row in another
-    // conversation). Without this check, `pinAssistantMessageOnRunCreate` only
-    // skips the pin and the run still mutates the foreign row via the id-only
-    // writers (#6418 review).
-    const clientAssistantMessageId =
-      typeof meta.assistantMessageId === 'string' && meta.assistantMessageId
-        ? meta.assistantMessageId
-        : null;
-    if (clientAssistantMessageId && !isSafeId(clientAssistantMessageId)) {
-      return sendApiError(res, 400, 'BAD_REQUEST', 'assistantMessageId is invalid');
-    }
-    if (
-      clientUserMessageId
-      && clientAssistantMessageId
-      && clientUserMessageId === clientAssistantMessageId
-    ) {
-      return sendApiError(
-        res,
-        400,
-        'BAD_REQUEST',
-        'userMessageId and assistantMessageId must be distinct',
-      );
-    }
-    if (clientAssistantMessageId) {
-      // Without a resolvable conversation there is nothing to validate the
-      // assistantMessageId against — the run would mutate a row it does not
-      // own via the id-only writers. Reject rather than guess (nettee).
-      if (typeof meta.conversationId !== 'string' || !meta.conversationId) {
-        return sendApiError(res, 400, 'BAD_REQUEST', 'assistantMessageId requires a conversation');
-      }
-      const chatConversation = getConversation(db, meta.conversationId);
-      if (
-        !chatConversation
-        || (
-          typeof meta.projectId === 'string'
-          && meta.projectId
-          && chatConversation.projectId !== meta.projectId
-        )
-      ) {
-        return sendApiError(res, 404, 'CONVERSATION_NOT_FOUND', 'conversation not found for project');
-      }
-      const existingAssistantPin = db
-        .prepare(
-          `SELECT role, conversation_id AS conversationId, run_id AS runId, run_status AS runStatus FROM messages WHERE id = ?`,
-        )
-        .get(clientAssistantMessageId) as
-        | { role?: unknown; conversationId?: unknown; runId?: unknown; runStatus?: unknown }
-        | undefined;
-      if (existingAssistantPin && existingAssistantPin.role !== 'assistant') {
-        return sendApiError(
-          res,
-          409,
-          'INVALID_ASSISTANT_MESSAGE',
-          'assistantMessageId must reference an assistant message',
-        );
-      }
-      if (
-        existingAssistantPin
-        && existingAssistantPin.conversationId !== meta.conversationId
-      ) {
-        return sendApiError(
-          res,
-          409,
-          'IDEMPOTENCY_CONFLICT',
-          'assistantMessageId belongs to a different conversation',
-        );
-      }
-    }
-    let runUserSeed: {
-      id: string;
-      conversationId: string;
-      content: string;
-      attachments: ReturnType<typeof seededUserMessageAttachmentFields>;
-      turnMetadata: ReturnType<typeof seededUserMessageTurnMetadataFields>;
-    } | null = null;
-    if (
-      typeof meta.conversationId === 'string' &&
-      meta.conversationId &&
-      (clientUserMessageId || missingClientPin || conversationFallbackBound)
-    ) {
-      if (missingClientPin) {
-        meta.assistantMessageId = randomUUID();
-      }
-      // Prefer original request currentPrompt (latest turn) whenever it is a
-      // string — including empty for attachments-only sends. Plugin resolution
-      // may replace meta.message with a rendered scenario brief for the run
-      // (see above); seed visible chat content from requestBody so that
-      // internal brief never appears as user-authored content. message may be
-      // a full flattened ChatRequest transcript. Minimal MCP requests set both
-      // equal. Only fall back to message when currentPrompt is absent. Empty
-      // message is still seedable when attachment metadata is present so
-      // chips/annotations survive reload for omit-pin clients that leave
-      // currentPrompt unset.
-      const projectRoot = runProject && meta.projectId
-        ? resolveProjectDir(PROJECTS_DIR, meta.projectId, runProject.metadata)
-        : null;
-      const seededAttachments = seededUserMessageAttachmentFields(meta, projectRoot);
-      const hasSeedableAttachmentMetadata =
-        (seededAttachments.attachments?.length ?? 0) > 0 ||
-        (seededAttachments.commentAttachments?.length ?? 0) > 0;
-      const originalCurrentPrompt = requestBody.currentPrompt;
-      const originalMessage = requestBody.message;
-      const promptForUserMessage =
-        typeof originalCurrentPrompt === 'string'
-          ? originalCurrentPrompt
-          : typeof originalMessage === 'string' &&
-              (originalMessage.trim().length > 0 || hasSeedableAttachmentMetadata)
-            ? originalMessage
-            : null;
-      if (promptForUserMessage !== null) {
-        runUserSeed = {
-          id: clientUserMessageId ?? randomUUID(),
-          conversationId: meta.conversationId,
-          content: promptForUserMessage,
-          attachments: seededAttachments,
-          turnMetadata: seededUserMessageTurnMetadataFields(
-            meta,
-            resolvedSnapshot?.ok ? resolvedSnapshot.snapshot : null,
-          ),
-        };
-      }
-    }
-    const seedRunUserMessage = () => {
-      if (!runUserSeed) return;
-      const now = Date.now();
-      upsertMessage(db, runUserSeed.conversationId, {
-        id: runUserSeed.id,
-        role: 'user',
-        content: runUserSeed.content,
-        startedAt: now,
-        endedAt: now,
-        // Same turn metadata the web client writes via PUT /messages so
-        // reload/retry keep sessionMode, runContext, and applied plugin.
-        ...runUserSeed.turnMetadata,
-        // Preserve request attachments/commentAttachments on the seeded user
-        // turn so reload/listMessages still show chips and annotation context
-        // for omit-pin / headless clients (same columns as PUT /messages).
-        ...runUserSeed.attachments,
-      });
-      // Bump parent project updatedAt so listProjects reorders (same as
-      // PUT /messages). Headless/API turns that never hit that route would
-      // otherwise leave the project buried under more recent activity.
-      if (typeof meta.projectId === 'string' && meta.projectId) {
-        updateProject(db, meta.projectId, {});
-      }
-    };
+    // Ownership is validated above first, so the seed below never lands in a
+    // conversation this run does not own.
+    if (!validateRunMessagePins(meta, res)) return;
+    const runUserSeed = prepareRunUserSeed(meta, requestBody, {
+      project: runProject,
+      conversationFallbackBound,
+      appliedPluginSnapshot: resolvedSnapshot?.ok ? resolvedSnapshot.snapshot : null,
+    });
+    const seedRunUserMessage = () => persistRunUserSeed(runUserSeed, meta.projectId);
     const fallbackAutomaticBeforeStart = async (error: unknown): Promise<boolean> => {
       if (
         !strategyRolloutDecision
@@ -3854,58 +3902,24 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     if (!toolBundleSupport.ok) {
       return sendApiError(res, 400, 'BAD_REQUEST', toolBundleSupport.message);
     }
-    // Mirror the POST /api/runs ownership check: the assistantMessageId must
-    // reference an assistant message in THIS conversation, or the run mutates a
-    // row it does not own via the id-only writers (#6418 review).
-    const chatAssistantMessageId =
-      typeof meta.assistantMessageId === 'string' && meta.assistantMessageId
-        ? meta.assistantMessageId
+    // Same pin validation and user-turn seed as POST /api/runs (#5811): an
+    // explicit or omitted conversationId leaves the user turn and its assistant
+    // row in the conversation, not just the files the run writes.
+    const conversationFallbackBound = bindDefaultProjectConversation(meta);
+    if (!validateRunMessagePins(meta, res)) return;
+    // Seed only into a conversation this project owns; /api/chat still serves a
+    // run whose conversation row is missing, so that case is left unseeded.
+    const seedConversation =
+      typeof meta.conversationId === 'string' && meta.conversationId
+        ? getConversation(db, meta.conversationId)
         : null;
-    if (chatAssistantMessageId) {
-      // Without a resolvable conversation there is nothing to validate the
-      // assistantMessageId against — the run would mutate a row it does not
-      // own via the id-only writers (nettee on #6418).
-      if (typeof meta.conversationId !== 'string' || !meta.conversationId) {
-        return sendApiError(res, 400, 'BAD_REQUEST', 'assistantMessageId requires a conversation');
-      }
-      const chatConversation = getConversation(db, meta.conversationId);
-      if (
-        !chatConversation
-        || (
-          typeof meta.projectId === 'string'
-          && meta.projectId
-          && chatConversation.projectId !== meta.projectId
-        )
-      ) {
-        return sendApiError(res, 404, 'CONVERSATION_NOT_FOUND', 'conversation not found for project');
-      }
-      const existingAssistantPin = db
-        .prepare(
-          `SELECT role, conversation_id AS conversationId, run_id AS runId, run_status AS runStatus FROM messages WHERE id = ?`,
-        )
-        .get(chatAssistantMessageId) as
-        | { role?: unknown; conversationId?: unknown; runId?: unknown; runStatus?: unknown }
-        | undefined;
-      if (existingAssistantPin && existingAssistantPin.role !== 'assistant') {
-        return sendApiError(
-          res,
-          409,
-          'INVALID_ASSISTANT_MESSAGE',
-          'assistantMessageId must reference an assistant message',
-        );
-      }
-      if (
-        existingAssistantPin
-        && existingAssistantPin.conversationId !== meta.conversationId
-      ) {
-        return sendApiError(
-          res,
-          409,
-          'IDEMPOTENCY_CONFLICT',
-          'assistantMessageId belongs to a different conversation',
-        );
-      }
-    }
+    const runUserSeed =
+      seedConversation
+      && typeof meta.projectId === 'string'
+      && meta.projectId
+      && seedConversation.projectId === meta.projectId
+        ? prepareRunUserSeed(meta, requestBody, { project: chatProject, conversationFallbackBound })
+        : null;
     if (typeof meta.projectId === 'string' && meta.projectId) {
       const preparedWorkspaceScope =
         await prepareRunWorkspaceScope(
@@ -3950,15 +3964,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     try {
       preparedRun = internalRuns.prepare({
         meta,
-        ...(clarificationContinuation && !clarificationContinuation.retry
+        ...(runUserSeed || (clarificationContinuation && !clarificationContinuation.retry)
           ? {
               beforeClaimCommit: (candidate) => {
-                beginStrategyClarification(db, {
-                  taskExecutionId: clarificationContinuation.task.taskExecutionId,
-                  sourceRunId: clarificationContinuation.sourceRunId,
-                  nextRunId: candidate.id,
-                  answer: clarificationContinuation.answer,
-                });
+                persistRunUserSeed(runUserSeed, meta.projectId);
+                if (clarificationContinuation && !clarificationContinuation.retry) {
+                  beginStrategyClarification(db, {
+                    taskExecutionId: clarificationContinuation.task.taskExecutionId,
+                    sourceRunId: clarificationContinuation.sourceRunId,
+                    nextRunId: candidate.id,
+                    answer: clarificationContinuation.answer,
+                  });
+                }
               },
             }
           : {}),
