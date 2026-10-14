@@ -201,35 +201,34 @@ describe('POST /api/runs headless fallbacks', () => {
     expect(run2Body.assistantMessageId).toBe(clientId);
   });
 
-  // #5811: every headless launch path must leave the user turn and its assistant
-  // row in the conversation. `/api/chat` used to persist neither, so an external
-  // caller got the run's files next to an empty conversation.
+  // #5811: a headless run that names its conversation leaves the user turn and
+  // its assistant row there, whichever route started it. `/api/chat` used to
+  // persist neither, so an external caller got the run's files next to an
+  // empty conversation.
   for (const endpoint of ['/api/runs', '/api/chat'] as const) {
-    for (const binding of ['explicit', 'omitted'] as const) {
-      it(`persists the user turn and its assistant row: ${endpoint}, ${binding} conversationId`, async () => {
-        started = await startTestServer();
-        const { projectId, conversationId } = await createProject(started.url, `${endpoint} ${binding}`);
-        const prompt = `Headless ${endpoint} prompt, ${binding} conversation`;
+    it(`persists the user turn and its assistant row in the named conversation: ${endpoint}`, async () => {
+      started = await startTestServer();
+      const { projectId, conversationId } = await createProject(started.url, `${endpoint} named conversation`);
+      const prompt = `Headless ${endpoint} prompt`;
 
-        const response = await fetch(`${started.url}${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            agentId: `missing-agent-${randomUUID()}`,
-            projectId,
-            ...(binding === 'explicit' ? { conversationId } : {}),
-            message: prompt,
-          }),
-        });
-        expect(response.ok).toBe(true);
-        // /api/chat streams until the run settles; /api/runs answers 202 JSON.
-        await response.text();
-
-        const messages = await listMessages(started.url, projectId, conversationId);
-        expect(messages.filter((m) => m.role === 'user').map((m) => m.content)).toEqual([prompt]);
-        expect(messages.filter((m) => m.role === 'assistant')).toHaveLength(1);
+      const response = await fetch(`${started.url}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: `missing-agent-${randomUUID()}`,
+          projectId,
+          conversationId,
+          message: prompt,
+        }),
       });
-    }
+      expect(response.ok).toBe(true);
+      // /api/chat streams until the run settles; /api/runs answers 202 JSON.
+      await response.text();
+
+      const messages = await listMessages(started.url, projectId, conversationId);
+      expect(messages.filter((m) => m.role === 'user').map((m) => m.content)).toEqual([prompt]);
+      expect(messages.filter((m) => m.role === 'assistant')).toHaveLength(1);
+    });
   }
 
   it('does not seed a second user turn when /api/chat replays the same clientRequestId', async () => {

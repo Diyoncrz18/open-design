@@ -252,17 +252,19 @@ describe('run cross-project conversation ownership', () => {
   it('rejects a supplied assistantMessageId when no conversation is bound', async () => {
     // nettee on #6418: /api/chat is a valid no-conversation route, but a
     // supplied assistantMessageId with no resolvable conversation cannot be
-    // validated and would mutate a foreign row via the id-only writers. With no
-    // projectId there is no default conversation to bind (#5811), so this stays
-    // a no-conversation request.
+    // validated and would mutate a foreign row via the id-only writers.
     started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
     const url = started.url;
+
+    const projectA = `xown_noconv_${randomUUID()}`;
+    await createProject(url, projectA, 'No-conv A');
 
     const assistantId = `assistant_noconv_${randomUUID()}`;
     const resp = await fetch(`${url}/api/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        projectId: projectA,
         assistantMessageId: assistantId,
         clientRequestId: `cr_noconv_${randomUUID()}`,
         agentId: 'claude',
@@ -273,90 +275,6 @@ describe('run cross-project conversation ownership', () => {
     expect(resp.status).toBe(400);
     expect(await resp.json()).toMatchObject({
       error: { code: 'BAD_REQUEST' },
-    });
-  });
-
-  it('pins a fresh assistantMessageId on the conversation /api/chat binds when conversationId is omitted', async () => {
-    // #5811: like POST /api/runs, /api/chat binds a project's default
-    // conversation when conversationId is omitted, then validates the pin
-    // against it. A fresh pin is accepted and lands in that conversation.
-    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
-    const url = started.url;
-
-    const projectA = `xown_bound_${randomUUID()}`;
-    await createProject(url, projectA, 'Bound default A');
-    const convA = await firstConversationId(url, projectA);
-
-    const assistantId = `assistant_bound_${randomUUID()}`;
-    const resp = await fetch(`${url}/api/chat`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        projectId: projectA,
-        assistantMessageId: assistantId,
-        clientRequestId: `cr_bound_${randomUUID()}`,
-        agentId: `missing-agent-${randomUUID()}`,
-        message: 'M',
-        currentPrompt: 'M',
-      }),
-    });
-    expect(resp.status).toBe(200);
-    // The SSE stream ends once the run settles.
-    await resp.text();
-
-    const messages = await fetch(
-      `${url}/api/projects/${encodeURIComponent(projectA)}/conversations/${encodeURIComponent(convA)}/messages`,
-    );
-    expect(messages.status).toBe(200);
-    const body = (await messages.json()) as { messages: Array<{ id: string; role: string }> };
-    expect(body.messages.find((m) => m.id === assistantId)?.role).toBe('assistant');
-  });
-
-  it('rejects an assistantMessageId owned by another conversation when /api/chat binds the default one', async () => {
-    // nettee P1 on #6418 still holds after the #5811 bind: the pin must belong
-    // to the conversation the run was bound to.
-    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
-    const url = started.url;
-
-    const projectA = `xown_bound_a_${randomUUID()}`;
-    const projectB = `xown_bound_b_${randomUUID()}`;
-    await createProject(url, projectA, 'Bound default A');
-    await createProject(url, projectB, 'Bound default B');
-    const convB = await firstConversationId(url, projectB);
-
-    const assistantId = `assistant_bound_b_${randomUUID()}`;
-    const seed = await fetch(
-      `${url}/api/projects/${projectB}/conversations/${convB}/messages/${assistantId}`,
-      {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          id: assistantId,
-          role: 'assistant',
-          content: 'x',
-          runId: 'run-b',
-          runStatus: 'running',
-          events: [],
-        }),
-      },
-    );
-    expect(seed.status).toBe(200);
-
-    const resp = await fetch(`${url}/api/chat`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        projectId: projectA,
-        assistantMessageId: assistantId,
-        clientRequestId: `cr_bound_a_${randomUUID()}`,
-        agentId: 'claude',
-        message: 'M',
-        currentPrompt: 'M',
-      }),
-    });
-    expect(resp.status).toBe(409);
-    expect(await resp.json()).toMatchObject({
-      error: { code: 'IDEMPOTENCY_CONFLICT' },
     });
   });
 
